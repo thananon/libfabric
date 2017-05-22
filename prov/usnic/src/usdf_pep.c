@@ -65,7 +65,6 @@
 #include "usdf.h"
 #include "usdf_endpoint.h"
 #include "usdf_cm.h"
-#include "usdf_msg.h"
 
 static int
 usdf_pep_bind(fid_t fid, fid_t bfid, uint64_t flags)
@@ -641,11 +640,7 @@ usdf_pep_open(struct fid_fabric *fabric, struct fi_info *info,
 		return -FI_EINVAL;
 	}
 
-	if (info->ep_attr->type != FI_EP_MSG) {
-		return -FI_ENODEV;
-	}
-
-	if ((info->caps & ~USDF_MSG_CAPS) != 0) {
+	if (info->caps != 0) {
 		return -FI_EBADF;
 	}
 
