@@ -140,11 +140,6 @@ struct usdf_domain {
 	TAILQ_HEAD(,usdf_tx) dom_tx_ready;
 	TAILQ_HEAD(,usdf_cq_hard) dom_hcq_list;
 
-	struct usdf_rdm_connection **dom_rdc_hashtab;
-	SLIST_HEAD(,usdf_rdm_connection) dom_rdc_free;
-	ofi_atomic32_t dom_rdc_free_cnt;
-	size_t dom_rdc_total;
-
 	/* used only by connected endpoints */
 	struct usdf_ep **dom_peer_tab;
 	uint32_t dom_next_peer;
@@ -215,9 +210,6 @@ struct usdf_tx {
 			ofi_atomic32_t tx_next_msg_id;
 			struct usdf_rdm_qe *tx_wqe_buf;
 			uint8_t *tx_inject_bufs;
-			TAILQ_HEAD(,usdf_rdm_qe) tx_free_wqe;
-			TAILQ_HEAD(,usdf_rdm_connection) tx_rdc_ready;
-			TAILQ_HEAD(,usdf_rdm_connection) tx_rdc_have_acks;
 			size_t tx_num_free_wqe;
 		} rdm;
 	} t;

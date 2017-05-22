@@ -39,8 +39,6 @@
 int usdf_ep_port_bind(struct usdf_ep *ep, struct fi_info *info);
 int usdf_ep_dgram_open(struct fid_domain *domain, struct fi_info *info,
 		struct fid_ep **ep, void *context);
-int usdf_ep_rdm_open(struct fid_domain *domain, struct fi_info *info,
-		struct fid_ep **ep, void *context);
 int usdf_ep_getopt_connected(fid_t fid, int level, int optname, void *optval,
 		size_t *optlen);
 int usdf_ep_getopt_unconnected(fid_t fid, int level, int optname, void *optval,
