@@ -308,6 +308,8 @@ usdf_am_insert_async(struct fid_av *fav, const void *addr, size_t count,
 	struct usd_dest *u_dest;
 	int ret;
 	size_t i;
+	int *fi_errors = context;
+	uint32_t api_version;
 
 	USDF_TRACE_SYS(AV, "\n");
 
@@ -319,8 +321,17 @@ usdf_am_insert_async(struct fid_av *fav, const void *addr, size_t count,
 	fp = av->av_domain->dom_fabric;
 	dap = fp->fab_dev_attrs;
 
+	api_version = fp->fab_attr.api_version;
+
 	if (av->av_eq == NULL) {
 		return -FI_ENOEQ;
+	}
+
+	/* If user set FI_SYNC_ERR, we have to report back to user's buffer. */
+	if (flags & FI_SYNC_ERR) {
+		if (FI_VERSION_LT(api_version, FI_VERSION(1, 5)))
+			return -FI_EBADFLAGS;
+		memset(context, 0, sizeof(int) * count);
 	}
 
 	sin = addr;
@@ -358,10 +369,15 @@ usdf_am_insert_async(struct fid_av *fav, const void *addr, size_t count,
 		ret = usnic_nl_rt_lookup(dap->uda_ipaddr_be,
 				sin->sin_addr.s_addr, dap->uda_ifindex,
 				&req->avr_daddr_be);
+
 		if (ret != 0) {
+			if (flags & FI_SYNC_ERR)
+				fi_errors[i] = -ret;
+
 			if (ret == EHOSTUNREACH) {
 				req->avr_status = -FI_EHOSTUNREACH;
 				usdf_post_insert_request_error(insert, req);
+
 			} else {
 				ret = -ret;
 				goto fail;
@@ -374,6 +390,8 @@ usdf_am_insert_async(struct fid_av *fav, const void *addr, size_t count,
 			req->avr_dest = calloc(1, sizeof(*req->avr_dest));
 			if (req->avr_dest == NULL) {
 				ret = -FI_ENOMEM;
+				if (flags & FI_SYNC_ERR)
+					fi_errors[i] = ret;
 				goto fail;
 			}
 			u_dest = &req->avr_dest->ds_dest;
