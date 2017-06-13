@@ -813,10 +813,11 @@ usdf_ep_dgram_open(struct fid_domain *domain, struct fi_info *info,
 	struct usdf_ep *ep;
 	int ret;
 	struct usdf_pep *parent_pep;
-	struct sockaddr *src_addr;
+	void *src_addr;
 	int is_bound;
 	size_t tx_size;
 	size_t rx_size;
+	bool addr_format_str;
 
 	USDF_TRACE_SYS(EP_CTRL, "\n");
 
@@ -837,6 +838,7 @@ usdf_ep_dgram_open(struct fid_domain *domain, struct fi_info *info,
 	}
 
 	udp = dom_ftou(domain);
+	addr_format_str = (info->addr_format == FI_ADDR_STR);
 
 	ep = calloc(1, sizeof(*ep));
 	if (ep == NULL) {
@@ -859,12 +861,18 @@ usdf_ep_dgram_open(struct fid_domain *domain, struct fi_info *info,
 
 	if (!is_bound) {
 		if (info->src_addr != NULL) {
-			if (!usdf_cm_addr_is_valid_sin(info->src_addr,
-					info->src_addrlen, info->addr_format)) {
-				ret = -FI_EINVAL;
-				goto fail;
+			if (addr_format_str)
+				usdf_str_toaddr(info->src_addr,
+					(struct sockaddr_in **)&src_addr);
+			else {
+				src_addr = info->src_addr;
+				if (!usdf_cm_addr_is_valid_sin(info->src_addr,
+						info->src_addrlen,
+						info->addr_format)) {
+					ret = -FI_EINVAL;
+					goto fail;
+				}
 			}
-			src_addr = info->src_addr;
 		}
 
 		if (src_addr != NULL) {
@@ -953,6 +961,9 @@ usdf_ep_dgram_open(struct fid_domain *domain, struct fi_info *info,
 	}
 	ofi_atomic_initialize32(&ep->ep_refcnt, 0);
 	ofi_atomic_inc32(&udp->dom_refcnt);
+
+	if (addr_format_str)
+		free(src_addr);
 
 	*ep_o = ep_utof(ep);
 	return 0;

@@ -81,6 +81,7 @@ extern struct fi_provider usdf_ops;
 
 #define USDF_MR_IOV_LIMIT 1
 #define USDF_MR_CNT (65535)
+#define USDF_ADDR_STR_LEN (INET6_ADDRSTRLEN+8)
 
 /*
  *  TAILQ stuff that should exist
@@ -177,7 +178,10 @@ struct usdf_pep {
 	struct usdf_fabric *pep_fabric;
 	struct usdf_eq *pep_eq;
 	int pep_sock;
-	struct sockaddr_in pep_src_addr;
+	union {
+		struct sockaddr_in sin;
+		char addr_str[USDF_ADDR_STR_LEN];
+	} pep_src_addr;
 	enum usdf_pep_state pep_state;
 	struct usdf_poll_item pep_pollitem;
 	struct fi_info *pep_info;
@@ -510,5 +514,4 @@ void usdf_setup_fake_ibv_provider(void);
 
 /* passive endpoint functions */
 int usdf_pep_steal_socket(struct usdf_pep *pep, int *is_bound, int *sock_o);
-
 #endif /* _USDF_H_ */

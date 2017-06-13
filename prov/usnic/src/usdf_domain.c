@@ -58,6 +58,7 @@
 #include "usdf_rdm.h"
 #include "usdf_timer.h"
 #include "usdf_poll.h"
+#include "usdf_cm.h"
 
 static int
 usdf_domain_bind(struct fid *fid, struct fid *bfid, uint64_t flags)
@@ -231,6 +232,8 @@ usdf_domain_open(struct fid_fabric *fabric, struct fi_info *info,
 	struct usdf_fabric *fp;
 	struct usdf_domain *udp;
 	struct sockaddr_in *sin;
+	struct sockaddr_in *tmp_sin;
+	struct sockaddr_in src;
 	size_t addrlen;
 	int ret;
 #if ENABLE_DEBUG
@@ -238,6 +241,7 @@ usdf_domain_open(struct fid_fabric *fabric, struct fi_info *info,
 #endif
 
 	USDF_TRACE_SYS(DOMAIN, "\n");
+	sin = NULL;
 
 	fp = fab_fidtou(fabric);
 
@@ -274,16 +278,30 @@ usdf_domain_open(struct fid_fabric *fabric, struct fi_info *info,
 	switch (info->addr_format) {
 	case FI_SOCKADDR:
 		addrlen = sizeof(struct sockaddr);
+		sin = info->src_addr;
 		break;
 	case FI_SOCKADDR_IN:
 		addrlen = sizeof(struct sockaddr_in);
+		sin = info->src_addr;
+		break;
+	case FI_ADDR_STR:
+		USDF_DBG("info->src_addr: %s\n", info->src_addr);
+		usdf_str_toaddr(info->src_addr, &tmp_sin);
+		src = *tmp_sin;
+		sin = &src;
+		free(tmp_sin);
+		goto skip_size_check;
 		break;
 	default:
 		ret = -FI_EINVAL;
 		goto fail;
 	}
-	sin = info->src_addr;
-	if (info->src_addrlen != addrlen || sin->sin_family != AF_INET ||
+
+	if (info->src_addrlen != addrlen)
+		return -FI_EINVAL;
+
+skip_size_check:
+	if (sin->sin_family != AF_INET ||
 	    sin->sin_addr.s_addr != fp->fab_dev_attrs->uda_ipaddr_be) {
 		USDF_DBG_SYS(DOMAIN, "requested src_addr (%s) != fabric addr (%s)\n",
 			inet_ntop(AF_INET, &sin->sin_addr.s_addr,
