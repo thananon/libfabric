@@ -271,6 +271,8 @@ usdf_fill_straddr_info(struct fi_info *fi,
 		fi->src_addrlen = strlen(address_string);
 	}
 
+	free(sin);
+
 	return FI_SUCCESS;
 }
 static int
@@ -707,13 +709,9 @@ static bool usdf_check_device(uint32_t version, struct fi_info *hints,
 	struct sockaddr_in *sin;
 	int reachable;
 	int ret;
-	bool addr_format_str = false;
 
 	reachable = -1;
 	dap = &dep->ue_dattr;
-
-	if (hints)
-		addr_format_str = (hints->addr_format == FI_ADDR_STR);
 
 	/* Skip the device if it has problems. */
 	if (!dep->ue_dev_ok) {
@@ -726,11 +724,7 @@ static bool usdf_check_device(uint32_t version, struct fi_info *hints,
 	 * device.
 	 */
 	if (src) {
-		if (addr_format_str)
-			usdf_str_toaddr(src, &sin);
-		else
-			sin = src;
-
+		sin = usdf_format_to_sin(hints, src);
 		if (sin->sin_addr.s_addr != INADDR_ANY) {
 			if (sin->sin_addr.s_addr != dap->uda_ipaddr_be) {
 				inet_ntop(AF_INET, &sin->sin_addr.s_addr,
@@ -744,19 +738,14 @@ static bool usdf_check_device(uint32_t version, struct fi_info *hints,
 			}
 		}
 
-		if (addr_format_str)
-			free(sin);
+		usdf_free_sin_if_needed(hints, sin);
 	}
 
 	/* Check that the given destination address is reachable from the
 	 * interface.
 	 */
 	if (dest) {
-		if (addr_format_str)
-			usdf_str_toaddr(dest, &sin);
-		else
-			sin = dest;
-
+		sin = usdf_format_to_sin(hints, dest);
 		if (sin->sin_addr.s_addr != INADDR_ANY) {
 			ret = usdf_get_distance(dap, sin->sin_addr.s_addr,
 						&reachable);
@@ -781,8 +770,7 @@ static bool usdf_check_device(uint32_t version, struct fi_info *hints,
 			goto fail;
 		}
 
-		if (addr_format_str)
-			free(sin);
+		usdf_free_sin_if_needed(hints, sin);
 	}
 
 	/* Checks that the fabric name is correct for the given interface. The
@@ -806,25 +794,20 @@ static bool usdf_check_device(uint32_t version, struct fi_info *hints,
 	return true;
 
 fail:
-	if (addr_format_str)
-		free(sin);
+	usdf_free_sin_if_needed(hints, sin);
 
 	return false;
 }
 
 static int
 usdf_handle_node_and_service(const char *node, const char *service,
-		uint64_t flags, void **src, void **dest, bool addr_format_str)
+		uint64_t flags, void **src, void **dest, struct fi_info *hints,
+		struct addrinfo **ai)
 {
 	int ret;
-	size_t addr_strlen;
-	struct addrinfo *ai;
-
-	addr_strlen = USDF_ADDR_STR_LEN;
-	ai = NULL;
 
 	if (node != NULL || service != NULL) {
-		ret = getaddrinfo(node, service, NULL, &ai);
+		ret = getaddrinfo(node, service, NULL, ai);
 		if (ret != 0) {
 			USDF_DBG("getaddrinfo failed: %d: <%s>\n", ret,
 				 gai_strerror(ret));
@@ -832,28 +815,11 @@ usdf_handle_node_and_service(const char *node, const char *service,
 		}
 
 		if (flags & FI_SOURCE) {
-			if (addr_format_str) {
-				*src = calloc(1, addr_strlen);
-				if (*src == NULL)
-					return -FI_ENOMEM;
-				usdf_addr_tostr(
-					(struct sockaddr_in *)ai->ai_addr,
-					*src, &addr_strlen);
-			} else {
-				*src = ai->ai_addr;
-			}
-
+			*src = usdf_sin_to_format(hints,
+						 (*ai)->ai_addr, NULL);
 		} else {
-			if (addr_format_str) {
-				*dest = calloc(1, addr_strlen);
-				if (*dest == NULL)
-					return -FI_ENOMEM;
-				usdf_addr_tostr(
-					(struct sockaddr_in *)ai->ai_addr,
-					*dest, &addr_strlen);
-			} else {
-				*dest = ai->ai_addr;
-			}
+			*dest = usdf_sin_to_format(hints,
+						  (*ai)->ai_addr, NULL);
 		}
 	}
 
@@ -869,20 +835,20 @@ usdf_getinfo(uint32_t version, const char *node, const char *service,
 	struct usd_device_attrs *dap;
 	struct fi_info *fi_first;
 	struct fi_info *fi_last;
+	struct addrinfo *ai;
 	void *src;
 	void *dest;
 	enum fi_ep_type ep_type;
 	int d;
 	int ret;
-	bool addr_format_str;
 
 	USDF_TRACE("\n");
 
 	fi_first = NULL;
 	fi_last = NULL;
+	ai = NULL;
 	src = NULL;
 	dest = NULL;
-	addr_format_str = false;
 
 	/*
 	 * Get and cache usNIC device info
@@ -902,7 +868,6 @@ usdf_getinfo(uint32_t version, const char *node, const char *service,
 	/* Check the hints up front and fail if they're invalid. */
 	if (hints) {
 		ret = usdf_validate_hints(version, hints);
-		addr_format_str = (hints->addr_format == FI_ADDR_STR);
 		if (ret) {
 			USDF_WARN_SYS(FABRIC, "hints failed to validate\n");
 			goto fail;
@@ -911,7 +876,7 @@ usdf_getinfo(uint32_t version, const char *node, const char *service,
 
 	/* Get the src and dest if user specified. */
 	ret = usdf_handle_node_and_service(node, service, flags,
-				&src, &dest, addr_format_str);
+					   &src, &dest, hints, &ai);
 	if (ret) {
 		USDF_WARN_SYS(FABRIC, "failed to handle node and service.\n");
 		goto fail;
@@ -973,20 +938,14 @@ usdf_getinfo(uint32_t version, const char *node, const char *service,
 
 
 fail:
-	/* If we use address string, we allocated new sockaddr
-	 * from the core function. We free it here.
-	 */
-	if (addr_format_str) {
-		free(src);
-		free(dest);
-	}
+	if (ai)
+		freeaddrinfo(ai);
 
 	if (ret != 0) {
 		fi_freeinfo(fi_first);
-	}
-	if (ret != 0) {
 		USDF_INFO("returning %d (%s)\n", ret, fi_strerror(-ret));
 	}
+
 	return ret;
 }
 

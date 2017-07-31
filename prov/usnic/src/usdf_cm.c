@@ -450,7 +450,6 @@ usdf_cm_msg_connect(struct fid_ep *fep, const void *addr,
 	struct usdf_rx *rx;
 	struct usdf_domain *udp;
 	const struct sockaddr_in *sin;
-	struct sockaddr_in *tmp_sin;
 	struct epoll_event ev;
 	struct usdf_fabric *fp;
 	struct usdf_connreq_msg *reqp;
@@ -458,7 +457,6 @@ usdf_cm_msg_connect(struct fid_ep *fep, const void *addr,
 	struct fi_info *info;
 	size_t request_size;
 	int ret;
-	bool addr_format_str;
 
 	USDF_TRACE_SYS(EP_CTRL, "\n");
 
@@ -469,14 +467,8 @@ usdf_cm_msg_connect(struct fid_ep *fep, const void *addr,
 	udp = ep->ep_domain;
 	fp = udp->dom_fabric;
 	info = ep->ep_domain->dom_info;
-	addr_format_str = (info->addr_format == FI_ADDR_STR);
 
-	if (addr_format_str) {
-		usdf_str_toaddr(addr, &tmp_sin);
-		sin = tmp_sin;
-	} else {
-		sin = addr;
-	}
+	sin = usdf_format_to_sin(info, addr);
 
 	/* Although paramlen may be less than USDF_MAX_CONN_DATA, the same crp
 	 * struct is used for receiving the accept and reject payload. The
@@ -560,14 +552,12 @@ usdf_cm_msg_connect(struct fid_ep *fep, const void *addr,
 		goto fail;
 	}
 
-	if (addr_format_str)
-		free(tmp_sin);
+	usdf_free_sin_if_needed(info, (struct sockaddr_in *)sin);
 
 	return 0;
 
 fail:
-	if (addr_format_str)
-		free(tmp_sin);
+	usdf_free_sin_if_needed(info, (struct sockaddr_in *)sin);
 
 	if (crp != NULL) {
 		if (crp->cr_sockfd != -1) {
@@ -596,11 +586,14 @@ int usdf_str_toaddr(const char *str, struct sockaddr_in **outaddr)
 	/* call the core function. The core always allocate the addr for us. */
 	ret = ofi_str_toaddr(str, &type, (void **)outaddr, &size);
 
+#if USD_DEBUG
 	/* verify the output in debug. */
 	inet_ntop(AF_INET, &((*outaddr)->sin_addr), outstr, size);
-	USDF_DBG("%s(string) converted to addr :%s:%u(inet)\n", str,
-		outstr,
-		ntohs((*outaddr)->sin_port));
+	USDF_DBG_SYS(EP_CTRL,
+		    "%s(string) converted to addr :%s:%u(inet)\n",
+		    str, outstr, ntohs((*outaddr)->sin_port));
+#endif
+
 	return ret;
 }
 

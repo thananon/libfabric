@@ -232,8 +232,6 @@ usdf_domain_open(struct fid_fabric *fabric, struct fi_info *info,
 	struct usdf_fabric *fp;
 	struct usdf_domain *udp;
 	struct sockaddr_in *sin;
-	struct sockaddr_in *tmp_sin;
-	struct sockaddr_in src;
 	size_t addrlen;
 	int ret;
 #if ENABLE_DEBUG
@@ -285,13 +283,8 @@ usdf_domain_open(struct fid_fabric *fabric, struct fi_info *info,
 		sin = info->src_addr;
 		break;
 	case FI_ADDR_STR:
-		USDF_DBG("info->src_addr: %s\n", info->src_addr);
-		usdf_str_toaddr(info->src_addr, &tmp_sin);
-		src = *tmp_sin;
-		sin = &src;
-		free(tmp_sin);
+		sin = usdf_format_to_sin(info, info->src_addr);
 		goto skip_size_check;
-		break;
 	default:
 		ret = -FI_EINVAL;
 		goto fail;
@@ -310,6 +303,7 @@ skip_size_check:
 				actual, sizeof(actual)));
 
 		ret = -FI_EINVAL;
+		usdf_free_sin_if_needed(info, sin);
 		goto fail;
 	}
 

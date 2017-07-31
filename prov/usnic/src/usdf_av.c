@@ -827,3 +827,73 @@ fi_addr_t usdf_av_lookup_addr(struct usdf_av *av,
 	}
 	return FI_ADDR_NOTAVAIL;
 }
+
+/* Return sockaddr_in pointer. Must be used with usdf_free_sin_if_needed()
+ * to cleanup properly.
+ */
+struct sockaddr_in *usdf_format_to_sin(struct fi_info *info, const void *addr)
+{
+	struct sockaddr_in *sin;
+
+	if (!info)
+		return (struct sockaddr_in *)addr;
+
+	switch (info->addr_format) {
+	case FI_FORMAT_UNSPEC:
+	case FI_SOCKADDR:
+	case FI_SOCKADDR_IN:
+		return (struct sockaddr_in *)addr;
+	case FI_ADDR_STR:
+		usdf_str_toaddr(addr, &sin);
+		return sin;
+	default:
+		return NULL;
+	}
+}
+
+/* Utility function to free the sockaddr_in allocated from usdf_format_to_sin()
+ */
+void usdf_free_sin_if_needed(struct fi_info *info, struct sockaddr_in *sin)
+{
+	if (info && info->addr_format == FI_ADDR_STR)
+		free(sin);
+}
+
+/* Convert sockaddr_in pointer to appropriate format.
+ * If conversion happens, destroy the origin. (to minimize cleaning up code)
+ */
+void *usdf_sin_to_format(struct fi_info *info, void *addr, size_t *len)
+{
+	size_t addr_strlen;
+	char *addrstr;
+
+	if (!info)
+		return addr;
+
+	switch (info->addr_format) {
+	case FI_FORMAT_UNSPEC:
+	case FI_SOCKADDR:
+	case FI_SOCKADDR_IN:
+		if (len)
+			*len = sizeof(struct sockaddr_in);
+		return addr;
+	case FI_ADDR_STR:
+		addrstr = calloc(1, USDF_ADDR_STR_LEN);
+		if (addrstr == NULL) {
+			USDF_DBG("memory allocation failed\n");
+			return NULL;
+		}
+
+		addr_strlen = USDF_ADDR_STR_LEN;
+		usdf_addr_tostr(addr, addrstr, &addr_strlen);
+
+		if (len)
+			*len = addr_strlen;
+
+		free((struct sockaddr_in *)addr);
+		return addrstr;
+	default:
+		return NULL;
+	}
+
+}

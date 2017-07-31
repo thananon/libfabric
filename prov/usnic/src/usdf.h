@@ -514,4 +514,9 @@ void usdf_setup_fake_ibv_provider(void);
 
 /* passive endpoint functions */
 int usdf_pep_steal_socket(struct usdf_pep *pep, int *is_bound, int *sock_o);
+
+struct sockaddr_in *usdf_format_to_sin(struct fi_info *info, const void *addr);
+void *usdf_sin_to_format(struct fi_info *info, void *addr, size_t *len);
+void usdf_free_sin_if_needed(struct fi_info *info, struct sockaddr_in *sin);
+
 #endif /* _USDF_H_ */

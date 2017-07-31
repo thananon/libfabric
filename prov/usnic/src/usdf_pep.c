@@ -100,11 +100,9 @@ usdf_pep_conn_info(struct usdf_connreq *crp)
 	struct usdf_pep *pep;
 	struct sockaddr_in *sin;
 	struct usdf_connreq_msg *reqp;
-	bool addr_format_str;
 
 	pep = crp->cr_pep;
 	reqp = (struct usdf_connreq_msg *)crp->cr_data;
-	addr_format_str = (pep->pep_info->addr_format == FI_ADDR_STR);
 
 	ip = fi_dupinfo(pep->pep_info);
 	if (!ip) {
@@ -122,16 +120,8 @@ usdf_pep_conn_info(struct usdf_connreq *crp)
 	sin->sin_addr.s_addr = reqp->creq_ipaddr;
 	sin->sin_port = reqp->creq_port;
 
-	if (addr_format_str) {
-		char *addr_str;
-
-		addr_str = calloc(1, USDF_ADDR_STR_LEN);
-		ip->dest_addrlen = sizeof(addr_str);
-		usdf_addr_tostr(sin, addr_str, &ip->dest_addrlen);
-		ip->dest_addr = addr_str;
-	} else {
-		ip->dest_addr = sin;
-	}
+	ip->dest_addr = usdf_sin_to_format(pep->pep_info, sin,
+					   &ip->dest_addrlen);
 
 	ip->handle = (fid_t) crp;
 	return ip;
@@ -330,16 +320,9 @@ usdf_pep_listen(struct fid_pep *fpep)
 	 * already did the bind in a previous call to usdf_pep_listen() and the
 	 * listen(2) call failed */
 	if (pep->pep_state == USDF_PEP_UNBOUND) {
-		if (addr_format_str) {
-			ret = usdf_str_toaddr((const char *)&pep->pep_src_addr,
-					       &sin);
-			if (ret) {
-				free(sin);
-				return ret;
-			}
-		} else {
-			sin = &pep->pep_src_addr.sin;
-		}
+		sin = usdf_format_to_sin(pep->pep_info, &pep->pep_src_addr);
+		if (sin == NULL)
+			goto fail;
 
 		ret = bind(pep->pep_sock, sin, sizeof(struct sockaddr_in));
 		if (ret == -1) {
@@ -386,8 +369,7 @@ usdf_pep_listen(struct fid_pep *fpep)
 	return 0;
 
 fail:
-	if (addr_format_str)
-		free(sin);
+	usdf_free_sin_if_needed(pep->pep_info, sin);
 
 	return -errno;
 }
@@ -601,23 +583,22 @@ static int usdf_pep_setname(fid_t fid, void *addr, size_t addrlen)
 	switch (info->addr_format) {
 	case FI_SOCKADDR:
 	case FI_SOCKADDR_IN:
-		if (((struct sockaddr *)addr)->sa_family != AF_INET) {
-			USDF_WARN_SYS(EP_CTRL, "non-AF_INET address given\n");
-			return -FI_EINVAL;
+		/* It is possible for passive endpoint to not have src_addr. */
+		if (info->src_addr) {
+			ret = usdf_cm_addr_is_valid_sin(info->src_addr,
+							info->src_addrlen,
+							info->addr_format);
+			if (!ret)
+				return -FI_EINVAL;
 		}
-		if (addrlen != sizeof(struct sockaddr_in)) {
-			USDF_WARN_SYS(EP_CTRL, "unexpected src_addrlen\n");
-			return -FI_EINVAL;
-		}
-		sin = (struct sockaddr_in *)addr;
 		break;
 	case FI_ADDR_STR:
-		usdf_str_toaddr(addr, &sin);
 		break;
 	default:
 		return -FI_EINVAL;
 	}
 
+	sin = usdf_format_to_sin(info, addr);
 	req_addr_be = sin->sin_addr.s_addr;
 
 	namebuf[0] = '\0';
@@ -636,7 +617,7 @@ static int usdf_pep_setname(fid_t fid, void *addr, size_t addrlen)
 		return -FI_EADDRNOTAVAIL;
 	}
 
-	ret = bind(pep->pep_sock, sin, sizeof(struct sockaddr_in));
+	ret = bind(pep->pep_sock, sin, sizeof(*sin));
 	if (ret == -1) {
 		return -errno;
 	}
@@ -708,7 +689,6 @@ usdf_pep_open(struct fid_fabric *fabric, struct fi_info *info,
 	struct sockaddr_in *sin;
 	int ret;
 	int optval;
-	bool addr_format_str = false;
 
 	USDF_TRACE_SYS(EP_CTRL, "\n");
 
@@ -729,29 +709,21 @@ usdf_pep_open(struct fid_fabric *fabric, struct fi_info *info,
 	case FI_SOCKADDR:
 	case FI_SOCKADDR_IN:
 		/* It is possible for passive endpoint to not have src_addr. */
-		if (!info->src_addr)
-			goto skip_validation;
-
-		if (((struct sockaddr *)info->src_addr)->sa_family != AF_INET) {
-			USDF_WARN_SYS(EP_CTRL, "non-AF_INET format.\n");
-			return -FI_EINVAL;
-		}
-
-		if (info->src_addrlen &&
-			info->src_addrlen != sizeof(struct sockaddr_in)) {
-			USDF_WARN_SYS(EP_CTRL, "unexpected src_addrlen\n");
-			return -FI_EINVAL;
+		if (info->src_addr) {
+			ret = usdf_cm_addr_is_valid_sin(info->src_addr,
+							info->src_addrlen,
+							info->addr_format);
+			if (!ret)
+				return -FI_EINVAL;
 		}
 		break;
 	case FI_ADDR_STR:
-		addr_format_str = true;
 		break;
 	default:
 		USDF_WARN_SYS(EP_CTRL, "unknown/unsupported addr_format\n");
 		return -FI_EINVAL;
 	}
 
-skip_validation:
 	fp = fab_ftou(fabric);
 
 	pep = calloc(1, sizeof(*pep));
@@ -809,17 +781,9 @@ skip_validation:
 		sin->sin_family = AF_INET;
 		sin->sin_addr.s_addr = fp->fab_dev_attrs->uda_ipaddr_be;
 
-		if (addr_format_str) {
-			char *addr_str;
-
-			addr_str = calloc(1, USDF_ADDR_STR_LEN);
-			pep->pep_info->src_addrlen = sizeof(addr_str);
-			usdf_addr_tostr(sin, addr_str,
-					&pep->pep_info->src_addrlen);
-			pep->pep_info->src_addr = addr_str;
-		} else {
-			pep->pep_info->src_addr = sin;
-		}
+		pep->pep_info->src_addr =
+			usdf_sin_to_format(pep->pep_info,
+					   sin, &pep->pep_info->src_addrlen);
 	}
 
 	memcpy(&pep->pep_src_addr, pep->pep_info->src_addr,

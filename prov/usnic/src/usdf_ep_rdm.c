@@ -878,25 +878,16 @@ static int
 usdf_rx_rdm_port_bind(struct usdf_rx *rx, struct fi_info *info)
 {
 	struct sockaddr_in *sin;
-	struct sockaddr_in *tmp_sin;
 	struct sockaddr_in src;
 	socklen_t addrlen;
 	int ret;
-	bool addr_format_str = false;
-	size_t addr_str_len = USDF_ADDR_STR_LEN;
 
 	if (info->src_addr != NULL) {
 		switch (info->addr_format) {
 		case FI_SOCKADDR:
 		case FI_SOCKADDR_IN:
-			sin = (struct sockaddr_in *)info->src_addr;
-			break;
 		case FI_ADDR_STR:
-			usdf_str_toaddr(info->src_addr, &tmp_sin);
-			src = *tmp_sin;
-			free(tmp_sin);
-			sin = &src;
-			addr_format_str = true;
+			sin = usdf_format_to_sin(info, info->src_addr);
 			break;
 		default:
 			return -FI_EINVAL;
@@ -924,8 +915,7 @@ usdf_rx_rdm_port_bind(struct usdf_rx *rx, struct fi_info *info)
 		 return -errno;
 	}
 
-	if (addr_format_str)
-		usdf_addr_tostr(sin, info->src_addr, &addr_str_len);
+	info->src_addr = usdf_sin_to_format(info, sin, &info->src_addrlen);
 
 	return 0;
 }
